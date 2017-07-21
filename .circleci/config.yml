@@ -1,0 +1,20 @@
+version: 2
+jobs:
+  build:
+    docker:
+      - image: circleci/golang:1.8
+
+    working_directory: /go/src/github.com/sk88ks/flow
+
+    steps:
+      - checkout
+
+      - run: 
+          name: Test and make coverage file
+          command: make test
+
+      - run: 
+          name: Send converage
+          command: bash <(curl -s https://codecov.io/bash)
+
+
