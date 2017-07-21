@@ -5,7 +5,8 @@ This can execute processes sequentially or concurrently.
  
 Current API Documents:
 
-* flow: [![GoDoc](https://godoc.org/github.com/sk88ks/flow?status.svg)](https://godoc.org/github.com/sk88ks/flow)
+[![GoDoc](https://godoc.org/github.com/sk88ks/flow?status.svg)](https://godoc.org/github.com/sk88ks/flow)
+[![codecov](https://codecov.io/gh/sk88ks/flow/branch/master/graph/badge.svg)](https://codecov.io/gh/sk88ks/flow)
 
 Installation
 ----
