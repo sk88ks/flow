@@ -32,6 +32,7 @@ func WrapFunc(f func() error) Func {
 	}
 }
 
+// New creates a new Flow
 func New() *Flow {
 	return &Flow{
 		concurrencyLevel: runtime.NumCPU(),
@@ -46,11 +47,11 @@ func (f *Flow) SetConcurrencyLevel(l int) {
 // Serial executes given funcs as serial processes
 func (f *Flow) Serial(fs ...Func) Func {
 	return func(ctx context.Context) error {
-		for _, f := range fs {
-			if f == nil {
+		for _, _f := range fs {
+			if _f == nil {
 				continue
 			}
-			if err := f(ctx); err != nil {
+			if err := _f(ctx); err != nil {
 				return err
 			}
 		}
@@ -72,6 +73,7 @@ func (f *Flow) Parallel(fs ...Func) Func {
 			go func(done chan struct{}) {
 				for _f := range funcCh {
 					if _f == nil {
+						done <- struct{}{}
 						continue
 					}
 					if err := _f(childCtx); err != nil {

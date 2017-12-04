@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -63,13 +64,19 @@ func TestFlow_SetConcurrencyLevel(t *testing.T) {
 }
 
 type TestProcess struct {
-	Count int
-	mu    *sync.RWMutex
+	Count  int
+	isWait bool
+	mu     *sync.RWMutex
 }
 
 func (p *TestProcess) CountUp() error {
+	if p.isWait {
+		time.Sleep(2 * time.Second)
+	}
+
 	p.mu.Lock()
 	defer p.mu.Unlock()
+
 	p.Count++
 	if p.Count > 2 {
 		p.Count = -1
@@ -128,7 +135,7 @@ func TestFlow_Serial(t *testing.T) {
 			p := &TestProcess{
 				mu: &sync.RWMutex{},
 			}
-			fs := []Func{}
+			fs := []Func{nil}
 			for i := 0; i < tt.args.fsNum; i++ {
 				fs = append(fs, WrapFunc(p.CountUp))
 			}
@@ -142,8 +149,12 @@ func TestFlow_Serial(t *testing.T) {
 func TestFlow_Parallel(t *testing.T) {
 	asserts := assert.New(t)
 
+	ctxWithTimeout, _ := context.WithTimeout(context.Background(), 1*time.Second)
+
 	type fields struct {
 		concurrencyLevel int
+		mu               *sync.RWMutex
+		isWait           bool
 	}
 	type args struct {
 		ctx   context.Context
@@ -159,7 +170,8 @@ func TestFlow_Parallel(t *testing.T) {
 		{
 			name: "All Funcs End Well",
 			fields: fields{
-				concurrencyLevel: 1,
+				concurrencyLevel: 3,
+				mu:               &sync.RWMutex{},
 			},
 			args: args{
 				ctx:   context.Background(),
@@ -171,7 +183,8 @@ func TestFlow_Parallel(t *testing.T) {
 		{
 			name: "A Func Issues Error",
 			fields: fields{
-				concurrencyLevel: 1,
+				concurrencyLevel: 3,
+				mu:               &sync.RWMutex{},
 			},
 			args: args{
 				ctx:   context.Background(),
@@ -180,6 +193,20 @@ func TestFlow_Parallel(t *testing.T) {
 			wantCount: -1,
 			wantErr:   errors.New("Overflow"),
 		},
+		{
+			name: "Call Ctx Done",
+			fields: fields{
+				concurrencyLevel: 3,
+				mu:               &sync.RWMutex{},
+				isWait:           true,
+			},
+			args: args{
+				ctx:   ctxWithTimeout,
+				fsNum: 2,
+			},
+			wantCount: 0,
+			wantErr:   context.DeadlineExceeded,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -187,9 +214,10 @@ func TestFlow_Parallel(t *testing.T) {
 				concurrencyLevel: tt.fields.concurrencyLevel,
 			}
 			p := &TestProcess{
-				mu: &sync.RWMutex{},
+				mu:     tt.fields.mu,
+				isWait: tt.fields.isWait,
 			}
-			fs := []Func{}
+			fs := []Func{nil}
 			for i := 0; i < tt.args.fsNum; i++ {
 				fs = append(fs, WrapFunc(p.CountUp))
 			}
