@@ -3,159 +3,199 @@ package flow
 import (
 	"context"
 	"errors"
+	"runtime"
+	"sync"
 	"testing"
 
-	. "github.com/smartystreets/goconvey/convey"
+	"github.com/stretchr/testify/assert"
 )
 
+func TestNew(t *testing.T) {
+	asserts := assert.New(t)
+
+	numCPU := runtime.NumCPU()
+
+	tests := []struct {
+		name string
+		want *Flow
+	}{
+		{
+			name: "Create A New Flow",
+			want: &Flow{
+				concurrencyLevel: numCPU,
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := New()
+			asserts.Equal(tt.want, got)
+		})
+	}
+}
+
 func TestFlow_SetConcurrencyLevel(t *testing.T) {
-	Convey("Given flow instance", t, func() {
-		f := New()
+	asserts := assert.New(t)
 
-		Convey("When setting concurrency level", func() {
-			f.SetConcurrencyLevel(5)
-
-			Convey("Then concurrency level should be set value", func() {
-				So(f.concurrencyLevel, ShouldEqual, 5)
-
-			})
+	type args struct {
+		l int
+	}
+	tests := []struct {
+		name                 string
+		args                 args
+		wantCuncurrencyLevel int
+	}{
+		{
+			name: "Set Concurrency Level",
+			args: args{
+				l: 2,
+			},
+			wantCuncurrencyLevel: 2,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := &Flow{}
+			f.SetConcurrencyLevel(tt.args.l)
+			asserts.Equal(tt.wantCuncurrencyLevel, f.concurrencyLevel)
 		})
-	})
+	}
 }
+
+type TestProcess struct {
+	Count int
+	mu    *sync.RWMutex
+}
+
+func (p *TestProcess) CountUp() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.Count++
+	if p.Count > 2 {
+		p.Count = -1
+		return errors.New("Overflow")
+	}
+	return nil
+}
+
 func TestFlow_Serial(t *testing.T) {
-	Convey("Given flow instance and funcs", t, func() {
-		f := New()
+	asserts := assert.New(t)
 
-		var counter int
-
-		baseF := func() error {
-			counter++
-			return nil
-		}
-
-		funcs := []Func{
-			WrapFunc(baseF),
-			WrapFunc(baseF),
-			WrapFunc(baseF),
-		}
-
-		ctx := context.Background()
-
-		Convey("When executes sequentially", func() {
-			err := f.Serial(funcs...)(ctx)
-
-			Convey("Then all funcs should be executed", func() {
-				So(err, ShouldBeNil)
-				So(counter, ShouldEqual, len(funcs))
-
-			})
-		})
-	})
-
-	Convey("Given flow instance and errored func", t, func() {
-		f := New()
-
-		var counter int
-
-		baseF := func() error {
-			counter++
-			return nil
-		}
-
-		funcs := []Func{
-			WrapFunc(baseF),
-			func(ctx context.Context) error {
-				counter++
-				return errors.New("This is error")
+	type fields struct {
+		concurrencyLevel int
+	}
+	type args struct {
+		ctx   context.Context
+		fsNum int
+	}
+	tests := []struct {
+		name      string
+		fields    fields
+		args      args
+		wantCount int
+		wantErr   error
+	}{
+		{
+			name: "All Funcs End Well",
+			fields: fields{
+				concurrencyLevel: 1,
 			},
-			WrapFunc(baseF),
-		}
-
-		ctx := context.Background()
-
-		Convey("When executing sequentially", func() {
-			err := f.Serial(funcs...)(ctx)
-
-			Convey("Then error should be returned", func() {
-				So(err, ShouldNotBeNil)
-				So(err.Error(), ShouldEqual, "This is error")
-
-			})
-		})
-	})
-}
-func TestFlow_Parallel(t *testing.T) {
-	Convey("Given flow instance and funcs", t, func() {
-		f := New()
-
-		res := make(chan int, 3)
-
-		baseF := func() error {
-			res <- 1
-			return nil
-		}
-
-		funcs := []Func{
-			WrapFunc(baseF),
-			WrapFunc(baseF),
-			WrapFunc(baseF),
-		}
-
-		ctx := context.Background()
-
-		Convey("When executing parallelly", func() {
-			err := f.Parallel(funcs...)(ctx)
-
-			var counter int
-			for i := 0; i < len(funcs); i++ {
-				select {
-				case <-res:
-					counter++
-				default:
-				}
+			args: args{
+				ctx:   context.Background(),
+				fsNum: 2,
+			},
+			wantCount: 2,
+			wantErr:   nil,
+		},
+		{
+			name: "A Func Issues Error",
+			fields: fields{
+				concurrencyLevel: 1,
+			},
+			args: args{
+				ctx:   context.Background(),
+				fsNum: 3,
+			},
+			wantCount: -1,
+			wantErr:   errors.New("Overflow"),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := &Flow{
+				concurrencyLevel: tt.fields.concurrencyLevel,
 			}
-
-			Convey("Then all funcs should be executed", func() {
-				So(err, ShouldBeNil)
-				So(counter, ShouldEqual, len(funcs))
-
-			})
+			p := &TestProcess{
+				mu: &sync.RWMutex{},
+			}
+			fs := []Func{}
+			for i := 0; i < tt.args.fsNum; i++ {
+				fs = append(fs, WrapFunc(p.CountUp))
+			}
+			err := f.Serial(fs...)(tt.args.ctx)
+			asserts.Equal(tt.wantErr, err)
+			asserts.Equal(tt.wantCount, p.Count)
 		})
-	})
+	}
+}
 
-	Convey("Given flow instance and errored func", t, func() {
-		f := New()
+func TestFlow_Parallel(t *testing.T) {
+	asserts := assert.New(t)
 
-		res := make(chan int, 3)
-
-		baseF := func() error {
-			res <- 1
-			return nil
-		}
-
-		funcs := []Func{
-			WrapFunc(baseF),
-			func(ctx context.Context) error {
-				return errors.New("This is error")
+	type fields struct {
+		concurrencyLevel int
+	}
+	type args struct {
+		ctx   context.Context
+		fsNum int
+	}
+	tests := []struct {
+		name      string
+		fields    fields
+		args      args
+		wantCount int
+		wantErr   error
+	}{
+		{
+			name: "All Funcs End Well",
+			fields: fields{
+				concurrencyLevel: 1,
 			},
-			WrapFunc(baseF),
-		}
-
-		ctx := context.Background()
-
-		Convey("When executing parallelly", func() {
-			err := f.Parallel(funcs...)(ctx)
-
-			Convey("Then error should be returned", func() {
-				So(err, ShouldNotBeNil)
-				close(res)
-				var counter int
-				for i := range res {
-					counter += i
-				}
-				So(err.Error(), ShouldEqual, "This is error")
-
-			})
+			args: args{
+				ctx:   context.Background(),
+				fsNum: 2,
+			},
+			wantCount: 2,
+			wantErr:   nil,
+		},
+		{
+			name: "A Func Issues Error",
+			fields: fields{
+				concurrencyLevel: 1,
+			},
+			args: args{
+				ctx:   context.Background(),
+				fsNum: 3,
+			},
+			wantCount: -1,
+			wantErr:   errors.New("Overflow"),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := &Flow{
+				concurrencyLevel: tt.fields.concurrencyLevel,
+			}
+			p := &TestProcess{
+				mu: &sync.RWMutex{},
+			}
+			fs := []Func{}
+			for i := 0; i < tt.args.fsNum; i++ {
+				fs = append(fs, WrapFunc(p.CountUp))
+			}
+			err := f.Parallel(fs...)(tt.args.ctx)
+			asserts.Equal(tt.wantErr, err)
+			asserts.Equal(tt.wantCount, p.Count)
 		})
-	})
+	}
 }
