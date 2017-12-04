@@ -12,5 +12,5 @@ Installation
 ----
 
 ```
-go get github.com/sk88ks/flow
+go get -u github.com/sk88ks/flow
 ```                                     
